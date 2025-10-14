@@ -2,6 +2,7 @@
   config,
   lib,
   pkgs,
+  ...
 }: let
   cfg = config.services.koito;
 in {
