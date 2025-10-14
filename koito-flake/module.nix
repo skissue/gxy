@@ -43,11 +43,23 @@ in {
       groups.koito = {};
     };
 
+    services.postgresql = {
+      enable = true;
+      ensureDatabases = ["koito"];
+      ensureUsers = [
+        {
+          name = "koito";
+          ensureDBOwnership = true;
+        }
+      ];
+    };
+
     systemd.services.koito = {
       description = "Koito server";
       after = ["network.target"];
       wantedBy = ["multi-user.target"];
       environment = {
+        KOITO_DATABASE_URL = "postgresql://koito@localhost/koito";
         KOITO_ALLOWED_HOSTS = lib.concatStringsSep "," cfg.allowedHosts;
         KOITO_BIND_ADDRESS = cfg.bindAddress;
         KOITO_PORT = toString cfg.port;
