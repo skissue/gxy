@@ -36,7 +36,10 @@ in {
 
   config = lib.mkIf cfg.enable {
     users = {
-      users.koito.isSystemUser = true;
+      users.koito = {
+        group = "koito";
+        isSystemUser = true;
+      };
       groups.koito = {};
     };
 
