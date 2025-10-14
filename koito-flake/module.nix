@@ -37,7 +37,7 @@ in {
   config = lib.mkIf cfg.enable {
     users = {
       users.koito.isSystemUser = true;
-      groups.groups.koito = {};
+      groups.koito = {};
     };
 
     systemd.services.koito = {
