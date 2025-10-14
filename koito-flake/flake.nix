@@ -11,9 +11,9 @@
     in
       pkgs.callPackage ./package.nix {};
 
-    overlays.default = final: prev: [
-      (final.callPackage ./package.nix {})
-    ];
+    overlays.default = final: prev: {
+      koito = final.callPackage ./package.nix {};
+    };
 
     nixosModules.default = ./module.nix;
   };
