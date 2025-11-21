@@ -20,6 +20,7 @@ stdenv.mkDerivation (finalAttrs: {
   nativeBuildInputs = [
     yarnConfigHook
     yarnBuildHook
+    
     # Needed for executing package.json scripts
     nodejs
   ];
