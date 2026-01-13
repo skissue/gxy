@@ -8,13 +8,13 @@
 }:
 buildGoModule (finalAttrs: {
   pname = "Koito";
-  version = "0.0.15";
+  version = "0.1.1";
 
   src = fetchFromGitHub {
     owner = "gabehf";
     repo = "Koito";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-1UGTc+WdrC5YIVV5ZMAkC5iTgfFWl6OTPUVnjQPEwsg=";
+    hash = "sha256-Z5t3oUs/e+rxsTe49ZrO/+7qXdW9IbEgPcOP2PY21rU=";
   };
 
   vendorHash = "sha256-e/gU29rPQUY+eugQxnjbb8UCJ3K4KCtRqJzBl5eFNxg=";
