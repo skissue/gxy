@@ -48,6 +48,41 @@ made on other devices to be reflected in elfeed."
 (defvar elfeed-protocol-miniflux-feeds (make-hash-table :test 'equal)
   "Feed list from Miniflux, will be filled before updating operation.")
 
+(defvar elfeed-protocol-miniflux--token-cache (make-hash-table :test 'equal)
+  "Cache for evaluated API tokens, keyed by proto-id.
+This prevents repeated evaluation of :password forms (e.g., DBus secret lookups)
+on every HTTP request.")
+
+(defun elfeed-protocol-miniflux-clear-token-cache (&optional proto-id)
+  "Clear cached API token for PROTO-ID, or all Miniflux tokens if nil.
+Use this if you change your API token and need to re-authenticate."
+  (interactive)
+  (if proto-id
+      (remhash proto-id elfeed-protocol-miniflux--token-cache)
+    (clrhash elfeed-protocol-miniflux--token-cache)))
+
+(defun elfeed-protocol-miniflux--get-api-token (proto-id)
+  "Get API token for PROTO-ID, using cache if available.
+On first call, evaluates `elfeed-protocol-meta-password' and caches the result."
+  (or (gethash proto-id elfeed-protocol-miniflux--token-cache)
+      (let ((token (elfeed-protocol-meta-password proto-id)))
+        (when token
+          (puthash proto-id token elfeed-protocol-miniflux--token-cache))
+        token)))
+
+(defun elfeed-protocol-miniflux--get-base-url (url)
+  "Extract base URL (scheme://user@host:port) from full URL.
+This strips the path and query string, returning just the server base URL."
+  (let* ((urlobj (url-generic-parse-url url))
+         (scheme (url-type urlobj))
+         (user (url-user urlobj))
+         (host (url-host urlobj))
+         (port (url-portspec urlobj)))
+    (concat scheme "://"
+            (if user (concat user "@") "")
+            host
+            (or port ""))))
+
 (defun elfeed-protocol-miniflux--get-last-sync-time (proto-id)
   "Get last sync time for PROTO-ID.
 This tracks when we last synced read/starred status from the server,
@@ -76,8 +111,9 @@ separate from :last-modified which tracks new entries by publication time."
   "Get http request headers with authorization and user agent information.
 URL should contains user and password fields, if not, will query in the related
 feed properties.  Will set content type to json if PUT-JSON is not nil."
-  (let* ((proto-id (elfeed-protocol-miniflux-id url))
-         (api-token (elfeed-protocol-meta-password proto-id))
+  (let* ((base-url (elfeed-protocol-miniflux--get-base-url url))
+         (proto-id (elfeed-protocol-miniflux-id base-url))
+         (api-token (elfeed-protocol-miniflux--get-api-token proto-id))
          (headers `(("User-Agent" . ,elfeed-user-agent))))
     (when (not api-token)
       (elfeed-log 'error "elfeed-protocol-miniflux: missing API token"))
@@ -107,7 +143,7 @@ Optional argument BODY is the rest Lisp code after operation finished."
                       (set-buffer-multibyte t))
                     (when elfeed-protocol-log-trace
                       (elfeed-log 'debug "elfeed-protocol-miniflux: %s" (buffer-string)))
-                    (elfeed-protocol-miniflux--parse-result ,@body)
+                    (elfeed-protocol-miniflux--parse-result ,url ,@body)
                     (unless use-curl
                       (kill-buffer)))))))
      (if use-curl
@@ -134,8 +170,9 @@ Optional argument BODY is the rest Lisp code after operation finished."
          (let ((url-request-extra-headers headers))
            (url-retrieve no-auth-url cb () t t)))))))
 
-(defmacro elfeed-protocol-miniflux--parse-result (&rest body)
+(defmacro elfeed-protocol-miniflux--parse-result (url &rest body)
   "Parse Miniflux api result JSON buffer.
+URL is used to clear token cache on auth errors.
 Will eval rest BODY expressions at end."
   (declare (indent defun))
   `(let* ((content (buffer-string))
@@ -146,7 +183,14 @@ Will eval rest BODY expressions at end."
                      nil)))
           (error-message (and result (map-elt result 'error_message))))
      (if error-message
-         (elfeed-log 'error "elfeed-protocol-miniflux: %s" error-message)
+         (progn
+           ;; Clear token cache on auth errors so next request will re-evaluate password
+           (when (string-match-p "Unauthorized\\|Forbidden\\|Access Denied" error-message)
+             (let* ((base-url (elfeed-protocol-miniflux--get-base-url ,url))
+                    (proto-id (elfeed-protocol-miniflux-id base-url)))
+               (elfeed-protocol-miniflux-clear-token-cache proto-id)
+               (elfeed-log 'warn "elfeed-protocol-miniflux: cleared token cache due to auth error")))
+           (elfeed-log 'error "elfeed-protocol-miniflux: %s" error-message))
        ,@body)))
 
 (defmacro elfeed-protocol-miniflux-fetch-prepare (host-url &rest body)
