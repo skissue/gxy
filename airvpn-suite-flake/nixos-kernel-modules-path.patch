@@ -1,0 +1,48 @@
+diff --git a/src/loadmod.c b/src/loadmod.c
+index 0bc839f..05ff7b1 100644
+--- a/src/loadmod.c
++++ b/src/loadmod.c
+@@ -46,17 +46,39 @@ int process_module(const char *module, const char *params);
+ int load_kernel_module(const char *module, const char *params)
+ {
+     struct utsname uts_uname;
+-    char lib_module_path[64], module_path[128], module_file_path[128];
++    char lib_module_path[256], module_path[256], module_file_path[256];
+     char line[1024], depmod[MAX_MODULE_DEP][128], *cpos;
+     int i, ndep = 0, done = 0, retval;
+     FILE *fmodule;
+-
+-    strcpy(lib_module_path, "/lib/modules/");
++    const char *env_module_path;
+ 
+     if(uname(&uts_uname) != 0)
+         return MODULE_LOAD_ERROR;
+ 
+-    strcat(lib_module_path, uts_uname.release);
++    lib_module_path[0] = '\0';
++
++    env_module_path = getenv("KERNEL_MODULES_PATH");
++    if(env_module_path != NULL && env_module_path[0] != '\0')
++    {
++        snprintf(lib_module_path, sizeof(lib_module_path), "%s/%s", env_module_path, uts_uname.release);
++        snprintf(module_file_path, sizeof(module_file_path), "%s/modules.dep", lib_module_path);
++        if(access(module_file_path, F_OK) != 0)
++            lib_module_path[0] = '\0';
++    }
++
++    if(lib_module_path[0] == '\0')
++    {
++        snprintf(lib_module_path, sizeof(lib_module_path),
++                 "/run/booted-system/kernel-modules/lib/modules/%s", uts_uname.release);
++        snprintf(module_file_path, sizeof(module_file_path), "%s/modules.dep", lib_module_path);
++        if(access(module_file_path, F_OK) != 0)
++            lib_module_path[0] = '\0';
++    }
++
++    if(lib_module_path[0] == '\0')
++    {
++        snprintf(lib_module_path, sizeof(lib_module_path), "/lib/modules/%s", uts_uname.release);
++    }
+ 
+     strcpy(module_file_path, lib_module_path);
+     strcat(module_file_path, "/");

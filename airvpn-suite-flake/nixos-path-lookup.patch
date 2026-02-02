@@ -1,0 +1,44 @@
+diff --git a/src/execproc.c b/src/execproc.c
+index b8c888b..80b76bf 100644
+--- a/src/execproc.c
++++ b/src/execproc.c
+@@ -506,17 +506,23 @@ void exec_get_path(const char *cmd, char *path, char *searchpath)
+ 
+ #endif
+ 
++    const size_t evalpath_size = 8192;
++    const size_t cmdpath_size = 1024;
+     const char *delim = ":";
+     char *evalpath = NULL, *cpath = NULL, *cmdpath = NULL;
+     int cmdfound;
+ 
+-    evalpath = (char *)malloc(1024);
+-    cmdpath = (char *)malloc(128);
++    evalpath = (char *)malloc(evalpath_size);
++    cmdpath = (char *)malloc(cmdpath_size);
+ 
+-    if(searchpath == NULL)
+-        strcpy(evalpath, defaultpath);
++    if(searchpath != NULL)
++        strncpy(evalpath, searchpath, evalpath_size - 1);
++    else if(getenv("PATH") != NULL)
++        strncpy(evalpath, getenv("PATH"), evalpath_size - 1);
+     else
+-        strcpy(evalpath, searchpath);
++        strncpy(evalpath, defaultpath, evalpath_size - 1);
++
++    evalpath[evalpath_size - 1] = '\0';
+ 
+     cmdfound = 0;
+ 
+@@ -526,9 +532,7 @@ void exec_get_path(const char *cmd, char *path, char *searchpath)
+ 
+     while(cpath != NULL && cmdfound == 0)
+     {
+-        strcpy(cmdpath, cpath);
+-        strcat(cmdpath, "/");
+-        strcat(cmdpath, cmd);
++        snprintf(cmdpath, cmdpath_size, "%s/%s", cpath, cmd);
+ 
+         if(access(cmdpath, F_OK) != -1)
+             cmdfound = 1;
