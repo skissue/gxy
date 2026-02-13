@@ -25,6 +25,15 @@ class LrcLine:
     idx: int
 
 
+@dataclass
+class AudioSegment:
+    """An audio segment for alignment."""
+    wav: np.ndarray
+    sr: int
+    offset_s: float
+    line: LrcLine
+
+
 # Metadata tags to recognize
 METADATA_TAGS = {"ti", "ar", "al", "by", "offset"}
 
@@ -131,6 +140,48 @@ def load_audio(filepath: Path) -> Tuple[np.ndarray, int]:
     return np.asarray(wav, dtype=np.float32), int(sr)
 
 
+def slice_audio(
+    wav: np.ndarray,
+    sr: int,
+    lines: List[LrcLine],
+    pad: float = 0.2,
+    min_seg: float = 0.5,
+) -> List[AudioSegment]:
+    """
+    Slice audio into segments for each non-empty lyric line.
+
+    Args:
+        wav: Mono audio waveform.
+        sr: Sample rate.
+        lines: Parsed LRC lines sorted by start_s.
+        pad: Padding in seconds around each segment.
+        min_seg: Minimum segment duration in seconds.
+
+    Returns:
+        List of AudioSegment for non-empty lines.
+    """
+    duration = len(wav) / sr
+    segments: List[AudioSegment] = []
+
+    for i, line in enumerate(lines):
+        if not line.text.strip():
+            continue
+
+        start = line.start_s
+        end = lines[i + 1].start_s if i + 1 < len(lines) else duration
+
+        seg_start = max(0, start - pad)
+        seg_end = min(duration, end + pad)
+
+        if seg_end - seg_start < min_seg:
+            seg_end = min(duration, seg_start + min_seg)
+
+        seg_wav = wav[int(seg_start * sr) : int(seg_end * sr)]
+        segments.append(AudioSegment(wav=seg_wav, sr=sr, offset_s=seg_start, line=line))
+
+    return segments
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="LRC to ELRC converter using Qwen3ForcedAligner"
@@ -147,6 +198,23 @@ def main() -> None:
         required=True,
         help="Path to audio file",
     )
+    parser.add_argument(
+        "--pad",
+        type=float,
+        default=0.2,
+        help="Padding in seconds around each segment",
+    )
+    parser.add_argument(
+        "--min-seg",
+        type=float,
+        default=0.5,
+        help="Minimum segment duration in seconds",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug output",
+    )
     args = parser.parse_args()
 
     if not args.lrc.exists():
@@ -156,22 +224,33 @@ def main() -> None:
 
     metadata, lines = parse_lrc(args.lrc)
 
-    # Print metadata
-    if metadata:
-        print("=== Metadata ===")
-        for tag, value in metadata.items():
-            print(f"  {tag}: {value}")
-        print()
+    if args.debug:
+        # Print metadata
+        if metadata:
+            print("=== Metadata ===")
+            for tag, value in metadata.items():
+                print(f"  {tag}: {value}")
+            print()
 
-    # Print parsed lines
-    print(f"=== Lyrics ({len(lines)} lines) ===")
-    for line in lines:
-        print(f"[{line.start_s:07.3f}] {line.text!r}")
+        # Print parsed lines
+        print(f"=== Lyrics ({len(lines)} lines) ===")
+        for line in lines:
+            print(f"[{line.start_s:07.3f}] {line.text!r}")
 
     # Load audio
     wav, sr = load_audio(args.audio)
     duration = len(wav) / sr
     print(f"\nAudio loaded: {duration:.2f}s @ {sr}Hz")
+
+    # Slice audio into segments
+    segments = slice_audio(wav, sr, lines, pad=args.pad, min_seg=args.min_seg)
+    print(f"Created {len(segments)} audio segments")
+
+    if args.debug:
+        print("\n=== Segment Durations ===")
+        for seg in segments:
+            seg_duration = len(seg.wav) / seg.sr
+            print(f"[{seg.offset_s:07.3f}] {seg_duration:5.2f}s  {seg.line.text!r}")
 
 
 if __name__ == "__main__":
