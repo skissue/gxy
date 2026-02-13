@@ -14,6 +14,9 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import soundfile as sf
+import torch
+
+from qwen_asr import Qwen3ForcedAligner
 
 
 @dataclass
@@ -32,6 +35,21 @@ class AudioSegment:
     sr: int
     offset_s: float
     line: LrcLine
+
+
+@dataclass
+class AlignedWord:
+    """A word with absolute timestamps."""
+    text: str
+    start_s: float
+    end_s: float
+
+
+@dataclass
+class AlignedLine:
+    """An aligned lyric line with word-level timestamps."""
+    line: LrcLine
+    words: List[AlignedWord]
 
 
 # Metadata tags to recognize
@@ -182,6 +200,55 @@ def slice_audio(
     return segments
 
 
+def create_aligner(model: str, device: str, dtype: str) -> Qwen3ForcedAligner:
+    """Create a Qwen3ForcedAligner instance."""
+    dtype_map = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
+    return Qwen3ForcedAligner.from_pretrained(model, dtype=dtype_map[dtype], device_map=device)
+
+
+def align_segments(
+    aligner: Qwen3ForcedAligner,
+    segments: List[AudioSegment],
+    language: str,
+    batch_size: int = 8,
+) -> List[AlignedLine]:
+    """
+    Align audio segments using Qwen3ForcedAligner.
+
+    Args:
+        aligner: The forced aligner instance.
+        segments: Audio segments to align.
+        language: Language for alignment (e.g., "Chinese", "English").
+        batch_size: Number of segments to process in each batch.
+
+    Returns:
+        List of AlignedLine with word-level timestamps.
+    """
+    aligned_lines: List[AlignedLine] = []
+
+    for i in range(0, len(segments), batch_size):
+        batch = segments[i : i + batch_size]
+
+        results = aligner.align(
+            audio=[(s.wav, s.sr) for s in batch],
+            text=[s.line.text for s in batch],
+            language=[language] * len(batch),
+        )
+
+        for seg, tokens in zip(batch, results):
+            words = [
+                AlignedWord(
+                    text=token.text,
+                    start_s=seg.offset_s + token.start_time,
+                    end_s=seg.offset_s + token.end_time,
+                )
+                for token in tokens
+            ]
+            aligned_lines.append(AlignedLine(line=seg.line, words=words))
+
+    return aligned_lines
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="LRC to ELRC converter using Qwen3ForcedAligner"
@@ -209,6 +276,37 @@ def main() -> None:
         type=float,
         default=0.5,
         help="Minimum segment duration in seconds",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="Qwen/Qwen3-ForcedAligner-0.6B",
+        help="Path or HuggingFace model ID for aligner",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cuda:0",
+        help="Device for inference",
+    )
+    parser.add_argument(
+        "--dtype",
+        type=str,
+        default="bfloat16",
+        choices=["bfloat16", "float16", "float32"],
+        help="Data type for inference",
+    )
+    parser.add_argument(
+        "--language",
+        type=str,
+        required=True,
+        help="Language: Chinese, English, etc.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=8,
+        help="Batch size for alignment",
     )
     parser.add_argument(
         "--debug",
@@ -251,6 +349,19 @@ def main() -> None:
         for seg in segments:
             seg_duration = len(seg.wav) / seg.sr
             print(f"[{seg.offset_s:07.3f}] {seg_duration:5.2f}s  {seg.line.text!r}")
+
+    print(f"\nLoading aligner: {args.model}")
+    aligner = create_aligner(args.model, args.device, args.dtype)
+
+    print(f"Aligning {len(segments)} segments (batch_size={args.batch_size})...")
+    aligned = align_segments(aligner, segments, args.language, args.batch_size)
+    print(f"Aligned {len(aligned)} lines")
+
+    print("\n=== First 3 Aligned Lines ===")
+    for al in aligned[:3]:
+        print(f"\n[{al.line.start_s:07.3f}] {al.line.text!r}")
+        for w in al.words:
+            print(f"  {w.start_s:07.3f} - {w.end_s:07.3f}: {w.text!r}")
 
 
 if __name__ == "__main__":
