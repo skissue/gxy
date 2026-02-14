@@ -258,11 +258,15 @@ def format_timestamp(seconds: float) -> str:
     return f"{mm:02d}:{ss:02d}.{xx:02d}"
 
 
-def format_elrc_line(aligned: AlignedLine) -> str:
-    """Format an aligned line as ELRC: [mm:ss.xx] <mm:ss.xx> word1 <mm:ss.xx> word2 ..."""
+def format_elrc_line(aligned: AlignedLine, include_end: bool = True) -> str:
+    """Format an aligned line as ELRC with word-level timestamps."""
     line_ts = format_timestamp(aligned.line.start_s)
-    word_parts = [f"<{format_timestamp(w.start_s)}> {w.text}" for w in aligned.words]
-    return f"[{line_ts}] " + " ".join(word_parts)
+    if include_end:
+        word_parts = [f"<{format_timestamp(w.start_s)}> {w.text} <{format_timestamp(w.end_s)}>" for w in aligned.words]
+        return f"[{line_ts}] " + "   ".join(word_parts)
+    else:
+        word_parts = [f"<{format_timestamp(w.start_s)}> {w.text}" for w in aligned.words]
+        return f"[{line_ts}] " + " ".join(word_parts)
 
 
 def write_elrc(
@@ -270,6 +274,7 @@ def write_elrc(
     metadata: Dict[str, str],
     aligned_lines: List[AlignedLine],
     all_lines: List[LrcLine],
+    include_end: bool = True,
 ) -> None:
     """
     Write ELRC output file.
@@ -279,6 +284,7 @@ def write_elrc(
         metadata: Metadata dict from LRC parsing.
         aligned_lines: Aligned lines with word timestamps.
         all_lines: All original LRC lines (for merging empty ones).
+        include_end: Whether to include end timestamps for each word.
     """
     aligned_idx = {al.line.idx for al in aligned_lines}
     idx_to_aligned = {al.line.idx: al for al in aligned_lines}
@@ -289,7 +295,7 @@ def write_elrc(
 
         for line in sorted(all_lines, key=lambda x: (x.start_s, x.idx)):
             if line.idx in aligned_idx:
-                f.write(format_elrc_line(idx_to_aligned[line.idx]) + "\n")
+                f.write(format_elrc_line(idx_to_aligned[line.idx], include_end) + "\n")
             else:
                 f.write(f"[{format_timestamp(line.start_s)}]\n")
 
@@ -359,6 +365,11 @@ def main() -> None:
         help="Enable debug output",
     )
     parser.add_argument(
+        "--no-end-timestamps",
+        action="store_true",
+        help="Omit word end timestamps (simpler ELRC format)",
+    )
+    parser.add_argument(
         "--out",
         type=Path,
         default=None,
@@ -409,7 +420,7 @@ def main() -> None:
     print(f"Aligned {len(aligned)} lines")
 
     output_path = args.out or args.lrc.with_suffix(".elrc")
-    write_elrc(output_path, metadata, aligned, lines)
+    write_elrc(output_path, metadata, aligned, lines, include_end=not args.no_end_timestamps)
     print(f"ELRC written to {output_path}")
 
 
