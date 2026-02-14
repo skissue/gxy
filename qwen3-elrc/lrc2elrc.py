@@ -261,8 +261,10 @@ def format_timestamp(seconds: float) -> str:
 def format_elrc_line(aligned: AlignedLine, include_end: bool = True) -> str:
     """Format an aligned line as ELRC with word-level timestamps."""
     line_ts = format_timestamp(aligned.line.start_s)
-    if include_end:
-        word_parts = [f"<{format_timestamp(w.start_s)}> {w.text} <{format_timestamp(w.end_s)}>" for w in aligned.words]
+    if include_end and aligned.words:
+        word_parts = [f"<{format_timestamp(w.start_s)}> {w.text} <{format_timestamp(w.end_s)}>" for w in aligned.words[:-1]]
+        last = aligned.words[-1]
+        word_parts.append(f"<{format_timestamp(last.start_s)}> {last.text}")
         return f"[{line_ts}] " + "   ".join(word_parts)
     else:
         word_parts = [f"<{format_timestamp(w.start_s)}> {w.text}" for w in aligned.words]
