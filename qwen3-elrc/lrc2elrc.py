@@ -249,6 +249,51 @@ def align_segments(
     return aligned_lines
 
 
+def format_timestamp(seconds: float) -> str:
+    """Convert seconds to mm:ss.xx format (centiseconds)."""
+    total_cs = max(0, int(round(seconds * 100)))
+    mm = total_cs // 6000
+    ss = (total_cs % 6000) // 100
+    xx = total_cs % 100
+    return f"{mm:02d}:{ss:02d}.{xx:02d}"
+
+
+def format_elrc_line(aligned: AlignedLine) -> str:
+    """Format an aligned line as ELRC: [mm:ss.xx] <mm:ss.xx> word1 <mm:ss.xx> word2 ..."""
+    line_ts = format_timestamp(aligned.line.start_s)
+    word_parts = [f"<{format_timestamp(w.start_s)}> {w.text}" for w in aligned.words]
+    return f"[{line_ts}] " + " ".join(word_parts)
+
+
+def write_elrc(
+    output_path: Path,
+    metadata: Dict[str, str],
+    aligned_lines: List[AlignedLine],
+    all_lines: List[LrcLine],
+) -> None:
+    """
+    Write ELRC output file.
+
+    Args:
+        output_path: Path to write the ELRC file.
+        metadata: Metadata dict from LRC parsing.
+        aligned_lines: Aligned lines with word timestamps.
+        all_lines: All original LRC lines (for merging empty ones).
+    """
+    aligned_idx = {al.line.idx for al in aligned_lines}
+    idx_to_aligned = {al.line.idx: al for al in aligned_lines}
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        for key, value in metadata.items():
+            f.write(f"[{key}:{value}]\n")
+
+        for line in sorted(all_lines, key=lambda x: (x.start_s, x.idx)):
+            if line.idx in aligned_idx:
+                f.write(format_elrc_line(idx_to_aligned[line.idx]) + "\n")
+            else:
+                f.write(f"[{format_timestamp(line.start_s)}]\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="LRC to ELRC converter using Qwen3ForcedAligner"
@@ -313,6 +358,12 @@ def main() -> None:
         action="store_true",
         help="Enable debug output",
     )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Output ELRC file path (default: same as --lrc with .elrc extension)",
+    )
     args = parser.parse_args()
 
     if not args.lrc.exists():
@@ -357,11 +408,9 @@ def main() -> None:
     aligned = align_segments(aligner, segments, args.language, args.batch_size)
     print(f"Aligned {len(aligned)} lines")
 
-    print("\n=== First 3 Aligned Lines ===")
-    for al in aligned[:3]:
-        print(f"\n[{al.line.start_s:07.3f}] {al.line.text!r}")
-        for w in al.words:
-            print(f"  {w.start_s:07.3f} - {w.end_s:07.3f}: {w.text!r}")
+    output_path = args.out or args.lrc.with_suffix(".elrc")
+    write_elrc(output_path, metadata, aligned, lines)
+    print(f"ELRC written to {output_path}")
 
 
 if __name__ == "__main__":
