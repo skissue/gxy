@@ -271,6 +271,35 @@ def format_elrc_line(aligned: AlignedLine, include_end: bool = True) -> str:
         return f"[{line_ts}] " + " ".join(word_parts)
 
 
+def validate_alignment(aligned_lines: List[AlignedLine], all_lines: List[LrcLine]) -> None:
+    """Print warnings for suspicious alignment results."""
+    sorted_lines = sorted(all_lines, key=lambda x: (x.start_s, x.idx))
+    idx_to_next_start: Dict[int, float] = {}
+    for i, line in enumerate(sorted_lines):
+        if i + 1 < len(sorted_lines):
+            idx_to_next_start[line.idx] = sorted_lines[i + 1].start_s
+
+    for aligned in aligned_lines:
+        line = aligned.line
+        words = aligned.words
+        line_ts = format_timestamp(line.start_s)
+
+        if not words:
+            continue
+
+        for w in words:
+            if w.end_s <= w.start_s:
+                print(f"Warning: Line {line.idx} [{line_ts}] - word '{w.text}' has zero/negative duration ({w.start_s:.2f}s -> {w.end_s:.2f}s)")
+
+        if words[0].start_s < line.start_s:
+            print(f"Warning: Line {line.idx} [{line_ts}] - first word '{words[0].text}' starts before line timestamp ({words[0].start_s:.2f}s < {line.start_s:.2f}s)")
+
+        if line.idx in idx_to_next_start:
+            next_start = idx_to_next_start[line.idx]
+            if words[-1].end_s > next_start:
+                print(f"Warning: Line {line.idx} [{line_ts}] - last word '{words[-1].text}' ends after next line starts ({words[-1].end_s:.2f}s > {next_start:.2f}s)")
+
+
 def write_elrc(
     output_path: Path,
     metadata: Dict[str, str],
@@ -420,6 +449,8 @@ def main() -> None:
     print(f"Aligning {len(segments)} segments (batch_size={args.batch_size})...")
     aligned = align_segments(aligner, segments, args.language, args.batch_size)
     print(f"Aligned {len(aligned)} lines")
+
+    validate_alignment(aligned, lines)
 
     output_path = args.out or args.lrc.with_suffix(".elrc")
     write_elrc(output_path, metadata, aligned, lines, include_end=not args.no_end_timestamps)
