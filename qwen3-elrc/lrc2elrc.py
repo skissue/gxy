@@ -137,12 +137,18 @@ def parse_lrc(filepath: Path) -> Tuple[Dict[str, str], List[LrcLine]]:
     return metadata, lines
 
 
-def load_audio(filepath: Path) -> Tuple[np.ndarray, int]:
+def load_audio(filepath: Path, mono: bool = True) -> Tuple[np.ndarray, int]:
     """
     Load audio file using soundfile.
 
+    Args:
+        filepath: Path to audio file.
+        mono: If True, convert to mono. If False, keep original channels.
+
     Returns:
-        Tuple of (waveform as mono float32 ndarray, sample rate)
+        Tuple of (waveform as float32 ndarray, sample rate)
+        If mono=True: shape (samples,)
+        If mono=False: shape (samples, channels)
     """
     if not filepath.exists():
         raise FileNotFoundError(f"Audio file not found: {filepath}")
@@ -152,10 +158,65 @@ def load_audio(filepath: Path) -> Tuple[np.ndarray, int]:
     except sf.SoundFileError as e:
         raise RuntimeError(f"Unsupported audio format or corrupted file: {filepath}: {e}")
 
-    if wav.ndim == 2:
+    if mono and wav.ndim == 2:
         wav = wav.mean(axis=1)
 
     return np.asarray(wav, dtype=np.float32), int(sr)
+
+
+def separate_vocals_demucs(wav: np.ndarray, sr: int, device: str) -> Tuple[np.ndarray, int]:
+    """
+    Separate vocals from audio using Demucs.
+
+    Args:
+        wav: Audio waveform, shape (samples,) or (samples, channels).
+        sr: Sample rate.
+        device: Device for inference (e.g., "cuda:0", "cpu").
+
+    Returns:
+        Tuple of (vocals as mono float32 ndarray, sample rate - unchanged)
+    """
+    try:
+        from demucs.pretrained import get_model
+        from demucs.apply import apply_model
+        import torchaudio
+    except ImportError as e:
+        raise RuntimeError(
+            "Demucs is not installed. Install with: pip install demucs"
+        ) from e
+
+    if wav.ndim == 1:
+        wav_ch = np.stack([wav, wav], axis=0)
+    elif wav.ndim == 2:
+        wav_ch = wav.T
+        if wav_ch.shape[0] == 1:
+            wav_ch = np.repeat(wav_ch, 2, axis=0)
+    else:
+        raise ValueError(f"Unexpected wav shape: {wav.shape}")
+
+    model = get_model("htdemucs")
+    model_sr = model.samplerate
+
+    wav_t = torch.from_numpy(np.asarray(wav_ch, dtype=np.float32))
+
+    if sr != model_sr:
+        wav_t = torchaudio.functional.resample(wav_t, sr, model_sr)
+
+    wav_t = wav_t.unsqueeze(0)
+    model.to(device)
+
+    with torch.inference_mode():
+        stems = apply_model(model, wav_t.to(device), progress=True)
+
+    vocal_idx = model.sources.index("vocals")
+    vocals = stems[0, vocal_idx]
+    vocals_mono = vocals.mean(dim=0).cpu().numpy().astype(np.float32)
+
+    del model, stems
+    if torch.cuda.is_available() and str(device).startswith("cuda"):
+        torch.cuda.empty_cache()
+
+    return vocals_mono, int(model_sr)
 
 
 def slice_audio(
@@ -186,6 +247,9 @@ def slice_audio(
             continue
 
         start = line.start_s
+        if start >= duration:
+            continue
+
         end = lines[i + 1].start_s if i + 1 < len(lines) else duration
 
         seg_start = max(0, start - pad)
@@ -194,7 +258,12 @@ def slice_audio(
         if seg_end - seg_start < min_seg:
             seg_end = min(duration, seg_start + min_seg)
 
-        seg_wav = wav[int(seg_start * sr) : int(seg_end * sr)]
+        a = int(seg_start * sr)
+        b = int(seg_end * sr)
+        if b <= a:
+            continue
+
+        seg_wav = wav[a:b]
         segments.append(AudioSegment(wav=seg_wav, sr=sr, offset_s=seg_start, line=line))
 
     return segments
@@ -406,6 +475,11 @@ def main() -> None:
         default=None,
         help="Output ELRC file path (default: same as --lrc with .elrc extension)",
     )
+    parser.add_argument(
+        "--separate-vocals",
+        action="store_true",
+        help="Use Demucs to isolate vocals before alignment (improves accuracy for music)",
+    )
     args = parser.parse_args()
 
     if not args.lrc.exists():
@@ -428,10 +502,16 @@ def main() -> None:
         for line in lines:
             print(f"[{line.start_s:07.3f}] {line.text!r}")
 
-    # Load audio
-    wav, sr = load_audio(args.audio)
-    duration = len(wav) / sr
+    # Load audio (stereo if separating vocals, mono otherwise)
+    wav, sr = load_audio(args.audio, mono=not args.separate_vocals)
+    duration = len(wav) / sr if wav.ndim == 1 else wav.shape[0] / sr
     print(f"\nAudio loaded: {duration:.2f}s @ {sr}Hz")
+
+    if args.separate_vocals:
+        print("Separating vocals with Demucs (this may take a while)...")
+        wav, sr = separate_vocals_demucs(wav, sr, device=args.device)
+        duration = len(wav) / sr
+        print(f"Vocal stem ready: {duration:.2f}s @ {sr}Hz")
 
     # Slice audio into segments
     segments = slice_audio(wav, sr, lines, pad=args.pad, min_seg=args.min_seg)
