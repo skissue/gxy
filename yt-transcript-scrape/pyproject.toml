@@ -1,0 +1,19 @@
+[project]
+name = "yt-transcript-scrape"
+version = "0.1.0"
+description = "Batch regex search across cached YouTube transcripts"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "youtube-transcript-api>=1.2.2",
+]
+
+[project.scripts]
+yt-transcript-search = "yt_transcript_search:main"
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+include = ["yt_transcript_search.py"]
