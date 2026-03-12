@@ -1,9 +1,9 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout},
+    layout::{Constraint, Flex, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Wrap},
 };
 
 use crate::app::App;
@@ -67,10 +67,86 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, chunks[0]);
 
-    // Footer
-    let footer_block = Block::default()
-        .borders(Borders::ALL);
+    if app.show_browser_picker {
+        draw_browser_picker(frame, app, chunks[1]);
+    } else {
+        draw_footer(frame, chunks[1]);
+    }
+}
 
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let vertical = Layout::vertical([Constraint::Length(height)])
+        .flex(Flex::Center)
+        .split(area);
+    Layout::horizontal([Constraint::Length(width)])
+        .flex(Flex::Center)
+        .split(vertical[0])[0]
+}
+
+fn draw_browser_picker(frame: &mut Frame, app: &App, _area: ratatui::layout::Rect) {
+    let list_height = app.browsers.len() as u16 + 2; // +2 for borders
+    let footer_height: u16 = 3;
+    let total_height = list_height + footer_height;
+    let width = 40;
+
+    let popup = centered_rect(width, total_height, frame.area());
+
+    frame.render_widget(Clear, popup);
+
+    let picker_chunks = Layout::vertical([
+        Constraint::Length(list_height),
+        Constraint::Length(footer_height),
+    ])
+    .split(popup);
+
+    let items: Vec<ListItem> = app
+        .browsers
+        .iter()
+        .map(|b| {
+            let label = if b.is_default {
+                format!("  {} (default)", b.name)
+            } else {
+                format!("  {}", b.name)
+            };
+            ListItem::new(label)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Select Browser "),
+        )
+        .highlight_style(
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ")
+        .highlight_spacing(HighlightSpacing::Always);
+
+    let mut state = ListState::default();
+    state.select(Some(app.selected_browser));
+    frame.render_stateful_widget(list, picker_chunks[0], &mut state);
+
+    // Picker footer
+    let footer_block = Block::default().borders(Borders::ALL);
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled("  [↑↓]", Style::default().add_modifier(Modifier::DIM)),
+        Span::styled(" Select   ", Style::default().add_modifier(Modifier::DIM)),
+        Span::styled("[Enter]", Style::default().add_modifier(Modifier::DIM)),
+        Span::styled(" Open   ", Style::default().add_modifier(Modifier::DIM)),
+        Span::styled("[Esc]", Style::default().add_modifier(Modifier::DIM)),
+        Span::styled(" Back", Style::default().add_modifier(Modifier::DIM)),
+    ]))
+    .block(footer_block);
+    frame.render_widget(footer, picker_chunks[1]);
+}
+
+fn draw_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
+    let footer_block = Block::default().borders(Borders::ALL);
     let footer = Paragraph::new(Line::from(vec![
         Span::styled("  [c]", Style::default().add_modifier(Modifier::DIM)),
         Span::styled(" Toggle cleaning   ", Style::default().add_modifier(Modifier::DIM)),
@@ -80,5 +156,5 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Span::styled(" Quit", Style::default().add_modifier(Modifier::DIM)),
     ]))
     .block(footer_block);
-    frame.render_widget(footer, chunks[1]);
+    frame.render_widget(footer, area);
 }

@@ -1,4 +1,5 @@
 mod app;
+mod browser;
 mod rules;
 mod ui;
 
@@ -23,7 +24,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let original_url = args[1].clone();
     let cleaned_url = cleaner.clean(&original_url);
 
-    let mut app = app::App::new(original_url, cleaned_url);
+    let browsers = browser::discover_browsers("bouncer");
+    let mut app = app::App::new(original_url, cleaned_url, browsers);
 
     // Setup terminal
     enable_raw_mode()?;
@@ -59,29 +61,51 @@ fn run(
             if key.kind != KeyEventKind::Press {
                 continue;
             }
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => {
-                    app.should_quit = true;
-                    return Ok(());
-                }
-                KeyCode::Char('c') => {
-                    app.cleaning_enabled = !app.cleaning_enabled;
-                }
-                KeyCode::Enter => {
-                    let url = app.active_url().to_string();
-                    // Restore terminal before spawning
-                    disable_raw_mode()?;
-                    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                    terminal.show_cursor()?;
 
-                    std::process::Command::new("xdg-open")
-                        .arg(&url)
-                        .spawn()
-                        .ok();
+            if app.show_browser_picker {
+                match key.code {
+                    KeyCode::Esc => {
+                        app.show_browser_picker = false;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if app.selected_browser > 0 {
+                            app.selected_browser -= 1;
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if app.selected_browser + 1 < app.browsers.len() {
+                            app.selected_browser += 1;
+                        }
+                    }
+                    KeyCode::Enter => {
+                        if let Some(entry) = app.browsers.get(app.selected_browser) {
+                            let url = app.active_url().to_string();
+                            let exec = entry.exec.clone();
 
-                    std::process::exit(0);
+                            disable_raw_mode()?;
+                            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                            terminal.show_cursor()?;
+
+                            browser::open_url_with(&exec, &url);
+                            std::process::exit(0);
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
+            } else {
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => {
+                        app.should_quit = true;
+                        return Ok(());
+                    }
+                    KeyCode::Char('c') => {
+                        app.cleaning_enabled = !app.cleaning_enabled;
+                    }
+                    KeyCode::Enter => {
+                        app.show_browser_picker = true;
+                    }
+                    _ => {}
+                }
             }
         }
     }
